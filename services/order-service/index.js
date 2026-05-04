@@ -1,5 +1,10 @@
 import express from "express";
 import dotenv from "dotenv";
+import {
+  createPaymentSession,
+  verifyPaymentStatus,
+} from "./clients/paymentgRPCClient.js";
+import crypto from "node:crypto";
 
 dotenv.config();
 
@@ -38,6 +43,50 @@ app.get("/health", (_req, res) => {
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
   });
+});
+
+app.post("/internal/grpc/payment-session", async (req, res, next) => {
+  try {
+    const orderId = req.body.orderId || `order-${Date.now()}`;
+    const amount = Number(req.body.amount || 199.99);
+    const currency = req.body.currency || "INR";
+
+    const response = await createPaymentSession({
+      orderId,
+      amount,
+      currency,
+      correlationId: req.correlationId,
+    });
+
+    res.json({
+      service: serviceName,
+      grpcHost: process.env.PAYMENT_GRPC_HOST || "localhost:9091",
+      response,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/internal/grpc/payment-verify", async (req, res, next) => {
+  try {
+    const paymentId = req.body.paymentId || "pay-demo-001";
+    const orderId = req.body.orderId || "order-demo-001";
+
+    const response = await verifyPaymentStatus({
+      paymentId,
+      orderId,
+      correlationId: req.correlationId,
+    });
+
+    res.json({
+      service: serviceName,
+      grpcHost: process.env.PAYMENT_GRPC_HOST || "localhost:9091",
+      response,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.use((_req, res) => {
