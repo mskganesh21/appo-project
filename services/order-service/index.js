@@ -6,6 +6,18 @@ import {
 } from "./clients/paymentgRPCClient.js";
 import crypto from "node:crypto";
 
+import {
+  checkoutCommand,
+  confirmOrderCommand,
+  failOrderCommand,
+  requestRefundCommand,
+} from "./commands/OrderCommands.js";
+import {
+  getOrderByIdQuery,
+  getMyOrdersQuery,
+  getAdminOrdersQuery,
+} from "./queries/OrderQueries.js";
+
 dotenv.config();
 
 const app = express();
@@ -89,15 +101,97 @@ app.post("/internal/grpc/payment-verify", async (req, res, next) => {
   }
 });
 
+app.post("/checkout", async (req, res, next) => {
+  try {
+    const { userId, items, currency } = req.body;
+
+    const result = await checkoutCommand({
+      userId,
+      items,
+      currency,
+      correlationId: req.correlationId,
+      paymentClient: {
+        createPaymentSession,
+      },
+    });
+
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/orders/:orderId/confirm", (req, res, next) => {
+  try {
+    const order = confirmOrderCommand(req.params.orderId);
+    res.json(order);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/orders/:orderId/fail", (req, res, next) => {
+  try {
+    const reason = req.body.reason || "CHECKOUT_FAILED";
+    const order = failOrderCommand(req.params.orderId, reason);
+    res.json(order);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/orders/:orderId/refund-request", (req, res, next) => {
+  try {
+    const reason = req.body.reason || "COMPENSATION_REQUIRED";
+    const order = requestRefundCommand(req.params.orderId, reason);
+    res.json(order);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/orders/:orderId", (req, res, next) => {
+  try {
+    const order = getOrderByIdQuery(req.params.orderId);
+    res.json(order);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/orders/user/:userId", (req, res, next) => {
+  try {
+    const orders = getMyOrdersQuery(req.params.userId);
+    res.json({ items: orders, count: orders.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/orders/admin", (_req, res, next) => {
+  try {
+    const orders = getAdminOrdersQuery();
+    res.json({ items: orders, count: orders.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use((_req, res) => {
   res.status(404).json({ error: "Not Found" });
 });
 
 app.use((err, req, res, _next) => {
   console.error(`[${serviceName}] error cid=${req.correlationId}`, err);
-  res
-    .status(500)
-    .json({ error: "Internal Server Error", correlationId: req.correlationId });
+  const statusCode = err.message.includes("not found")
+    ? 404
+    : err.message.includes("Invalid") || err.message.includes("required")
+      ? 400
+      : 500;
+  res.status(statusCode).json({
+    error: err.message || "Internal Server Error",
+    correlationId: req.correlationId,
+  });
 });
 
 app.listen(port, () => {
