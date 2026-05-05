@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import {listProducts, getProductById, createProduct, updateProduct, updateStock} from './product-service.js';
 
 dotenv.config();
 
@@ -40,15 +41,79 @@ app.get("/health", (_req, res) => {
   });
 });
 
+app.get("/products", (req, res, next) => {
+  try {
+    const category = req.query.category || null;
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+
+    const result = listProducts({ category, limit, offset });
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/products/:id", (req, res, next) => {
+  try {
+    const product = getProductById(req.params.id);
+    res.json(product);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/products", (req, res, next) => {
+  try {
+    const { name, category, price, stock, unit, description, imageUrl } =
+      req.body;
+
+    const product = createProduct({
+      name,
+      category,
+      price,
+      stock,
+      unit,
+      description,
+      imageUrl,
+    });
+
+    res.status(201).json(product);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/products/:id", (req, res, next) => {
+  try {
+    const updated = updateProduct(req.params.id, req.body);
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/products/:id/stock", (req, res, next) => {
+  try {
+    const quantity = req.body.quantity || 0;
+    const updated = updateStock(req.params.id, quantity);
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use((_req, res) => {
   res.status(404).json({ error: "Not Found" });
 });
 
 app.use((err, req, res, _next) => {
   console.error(`[${serviceName}] error cid=${req.correlationId}`, err);
-  res
-    .status(500)
-    .json({ error: "Internal Server Error", correlationId: req.correlationId });
+  const statusCode = err.message.includes("not found") ? 404 : 400;
+  res.status(statusCode).json({
+    error: err.message || "Internal Server Error",
+    correlationId: req.correlationId,
+  });
 });
 
 app.listen(port, () => {
