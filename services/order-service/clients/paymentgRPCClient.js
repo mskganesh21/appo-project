@@ -1,10 +1,14 @@
-import path from 'node:path';
-import grpc from '@grpc/grpc-js';
-import protoLoader from '@grpc/proto-loader';
+import path from "node:path";
+import grpc from "@grpc/grpc-js";
+import protoLoader from "@grpc/proto-loader";
+import { fileURLToPath } from "node:url";
 
 const paymentGrpcHost = process.env.PAYMENT_GRPC_HOST || "localhost:9091";
 
-const protoPath = path.resolve(__dirname, "../../../../proto/payment.proto");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const protoPath = path.resolve(__dirname, "../../../proto/payment.proto");
 
 const packageDefinition = protoLoader.loadSync(protoPath, {
   keepCase: true,
@@ -58,10 +62,4 @@ function verifyPaymentStatus({ paymentId, orderId, correlationId }) {
   });
 }
 
-module.exports = {
-  createPaymentSession,
-  verifyPaymentStatus,
-};
-
-
-
+export { verifyPaymentStatus, createPaymentSession };

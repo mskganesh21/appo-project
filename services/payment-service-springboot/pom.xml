@@ -19,11 +19,11 @@
 
     <properties>
         <java.version>21</java.version>
-        <grpc.version>1.66.0</grpc.version>
+        <grpc.version>1.68.1</grpc.version>                                         <!-- ← was 1.66.0 -->
         <protobuf.version>3.25.3</protobuf.version>
         <protobuf.maven.plugin.version>0.6.1</protobuf.maven.plugin.version>
         <os.maven.plugin.version>1.7.1</os.maven.plugin.version>
-        <grpc.spring.boot.starter.version>2.15.0.RELEASE</grpc.spring.boot.starter.version>
+        <grpc.spring.boot.starter.version>3.1.0.RELEASE</grpc.spring.boot.starter.version>  <!-- ← was 2.15.0 -->
     </properties>
 
     <dependencies>
@@ -60,10 +60,11 @@
             <version>${grpc.version}</version>
         </dependency>
 
+        <!-- needed for @GrpcService and generated proto code on Java 9+ -->
         <dependency>
-            <groupId>javax.annotation</groupId>
-            <artifactId>javax.annotation-api</artifactId>
-            <version>1.3.2</version>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>     <!-- ← was javax.annotation (wrong for Java 21) -->
+            <version>2.1.1</version>
         </dependency>
 
         <dependency>
@@ -76,6 +77,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
+        </dependency>
+
+        <!-- For Spring Boot 3 / Java 21 -->
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <version>2.1.1</version>
+        </dependency>
+
+        <!-- For protoc-generated gRPC code (uses javax.annotation.Generated) -->
+        <dependency>
+            <groupId>javax.annotation</groupId>
+            <artifactId>javax.annotation-api</artifactId>
+            <version>1.3.2</version>
         </dependency>
     </dependencies>
 
@@ -109,6 +124,28 @@
                 </executions>
             </plugin>
 
+            <!-- Tells IntelliJ about generated proto sources -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>add-source</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>add-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>${project.build.directory}/generated-sources/protobuf/java</source>
+                                <source>${project.build.directory}/generated-sources/protobuf/grpc-java</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
@@ -116,4 +153,3 @@
         </plugins>
     </build>
 </project>
-
