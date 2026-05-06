@@ -1,36 +1,51 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
-
-const STORAGE_TOKEN = "appo.token";
-const STORAGE_USER = "appo.user";
-
-function toErrorMessage(error, fallback = "Request failed") {
-  return error?.message || fallback;
-}
+import { useAuthStore } from "./stores/authStore";
+import { useProductStore } from "./stores/productStore";
+import { useCartStore } from "./stores/cartStore";
+import { useCheckoutStore } from "./stores/checkoutStore";
+import { useOrderStore } from "./stores/orderStore";
 
 function App() {
-  const [token, setToken] = useState(localStorage.getItem(STORAGE_TOKEN) || "");
-  const [user, setUser] = useState(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_USER);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  const {
+    token,
+    user,
+    busy: authBusy,
+    message,
+    setMessage,
+    signup: signupAction,
+    login: loginAction,
+    logout,
+    verifySession,
+  } = useAuthStore();
+  const {
+    products,
+    busy: productsBusy,
+    loadProducts: loadProductsAction,
+  } = useProductStore();
+  const {
+    cart,
+    busy: cartBusy,
+    loadCart: loadCartAction,
+    addToCart: addToCartAction,
+  } = useCartStore();
+  const {
+    checkoutResult,
+    busy: checkoutBusy,
+    checkout: checkoutAction,
+  } = useCheckoutStore();
+  const {
+    orders,
+    busy: ordersBusy,
+    loadMyOrders,
+    loadAdminOrders: loadAdminOrdersAction,
+  } = useOrderStore();
 
   const [authForm, setAuthForm] = useState({
     name: "User One",
     email: "user1@test.com",
     password: "password123",
   });
-
-  const [products, setProducts] = useState([]);
-  const [cart, setCart] = useState(null);
-  const [orders, setOrders] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("Ready");
-  const [checkoutResult, setCheckoutResult] = useState(null);
 
   const [adminForm, setAdminForm] = useState({
     name: "Admin Tomato",
@@ -43,244 +58,123 @@ function App() {
 
   const isLoggedIn = Boolean(token && user);
   const isAdmin = user?.role === "admin";
+  const busy =
+    authBusy || productsBusy || cartBusy || checkoutBusy || ordersBusy;
 
   useEffect(() => {
     if (!token || !user) return;
     verifySession();
   }, []);
 
-  async function api(path, options = {}) {
-    const headers = {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    };
-
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-
-    const response = await fetch(path, {
-      method: options.method || "GET",
-      headers,
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    });
-
-    const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
-
-    if (!response.ok) {
-      throw new Error(data?.error || `HTTP ${response.status}`);
-    }
-
-    return data;
-  }
-
-  async function verifySession() {
+  async function handleSignup() {
     try {
-      await api("/api/auth/verify");
-      setMessage("Session verified");
-    } catch (error) {
-      clearSession();
-      setMessage(`Session expired: ${toErrorMessage(error)}`);
-    }
-  }
-
-  function saveSession(nextToken, nextUser) {
-    setToken(nextToken);
-    setUser(nextUser);
-    localStorage.setItem(STORAGE_TOKEN, nextToken);
-    localStorage.setItem(STORAGE_USER, JSON.stringify(nextUser));
-  }
-
-  function clearSession() {
-    setToken("");
-    setUser(null);
-    localStorage.removeItem(STORAGE_TOKEN);
-    localStorage.removeItem(STORAGE_USER);
-  }
-
-  async function signup() {
-    setBusy(true);
-    try {
-      await api("/api/auth/signup", {
-        method: "POST",
-        body: {
-          name: authForm.name,
-          email: authForm.email,
-          password: authForm.password,
-        },
+      await signupAction({
+        name: authForm.name,
+        email: authForm.email,
+        password: authForm.password,
       });
-      setMessage("Signup successful. Login now.");
     } catch (error) {
-      setMessage(`Signup failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Signup failed: ${error.message}`);
     }
   }
 
-  async function login() {
-    setBusy(true);
+  async function handleLogin() {
     try {
-      const result = await api("/api/auth/login", {
-        method: "POST",
-        body: {
-          email: authForm.email,
-          password: authForm.password,
-        },
+      await loginAction({
+        email: authForm.email,
+        password: authForm.password,
       });
-      saveSession(result.token, result.user);
-      setMessage(`Logged in as ${result.user.email}`);
     } catch (error) {
-      setMessage(`Login failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Login failed: ${error.message}`);
     }
   }
 
-  async function loadProducts() {
-    setBusy(true);
+  async function handleLoadProducts() {
     try {
-      const result = await api("/graphql", {
-        method: "POST",
-        body: {
-          query: `
-            query Products($limit:Int,$offset:Int) {
-              products(limit:$limit, offset:$offset) {
-                items { id name category price stock unit description }
-                total
-              }
-            }
-          `,
-          variables: { limit: 40, offset: 0 },
-        },
-      });
-
-      if (result.errors?.length) {
-        throw new Error(result.errors[0].message);
-      }
-
-      setProducts(result.data.products.items);
-      setMessage(`Loaded ${result.data.products.items.length} products`);
+      const items = await loadProductsAction();
+      setMessage(`Loaded ${items.length} products`);
     } catch (error) {
-      setMessage(`Products load failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Products load failed: ${error.message}`);
     }
   }
 
-  async function addToCart(product) {
-    setBusy(true);
+  async function handleAddToCart(product) {
     try {
-      await api("/api/cart/items", {
-        method: "POST",
-        body: {
-          productId: product.id,
-          quantity: 1,
-          price: product.price,
-        },
-      });
-      await loadCart();
+      await addToCartAction(product, token);
       setMessage(`Added ${product.name} to cart`);
     } catch (error) {
-      setMessage(`Add to cart failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Add to cart failed: ${error.message}`);
     }
   }
 
-  async function loadCart() {
-    setBusy(true);
+  async function handleLoadCart() {
     try {
-      const result = await api("/api/cart");
-      setCart(result);
+      const result = await loadCartAction(token);
       setMessage(`Cart has ${result.items.length} item(s)`);
     } catch (error) {
-      setMessage(`Cart fetch failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Cart fetch failed: ${error.message}`);
     }
   }
 
-  async function checkout() {
+  async function handleCheckout() {
     if (!cart?.items?.length) {
       setMessage("Cart is empty");
       return;
     }
 
-    setBusy(true);
     try {
-      const idemKey = `chk-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      const result = await api("/api/checkout", {
-        method: "POST",
-        headers: {
-          "x-idempotency-key": idemKey,
-        },
-        body: {
-          currency: "INR",
-          items: cart.items.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            price: item.price,
-          })),
-        },
-      });
-
-      setCheckoutResult(result);
+      const result = await checkoutAction(cart.items, token);
       setMessage(`Checkout status: ${result.order?.status || "UNKNOWN"}`);
-      await loadOrders();
+      await handleLoadOrders();
     } catch (error) {
-      setMessage(`Checkout failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Checkout failed: ${error.message}`);
     }
   }
 
-  async function loadOrders() {
-    setBusy(true);
+  async function handleLoadOrders() {
     try {
-      const result = await api("/api/orders/me");
-      setOrders(result.items || []);
+      const result = await loadMyOrders(token);
       setMessage(`Loaded ${result.count || 0} order(s)`);
     } catch (error) {
-      setMessage(`Orders fetch failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Orders fetch failed: ${error.message}`);
     }
   }
 
-  async function loadAdminOrders() {
-    setBusy(true);
+  async function handleLoadAdminOrders() {
     try {
-      const result = await api("/api/orders/admin");
-      setOrders(result.items || []);
+      const result = await loadAdminOrdersAction(token);
       setMessage(`Admin loaded ${result.count || 0} order(s)`);
     } catch (error) {
-      setMessage(`Admin orders failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Admin orders failed: ${error.message}`);
     }
   }
 
   async function createAdminProduct() {
-    setBusy(true);
     try {
-      const result = await api("/api/admin/products", {
+      const response = await fetch("/api/admin/products", {
         method: "POST",
-        body: {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
           name: adminForm.name,
           category: adminForm.category,
           price: Number(adminForm.price),
           stock: Number(adminForm.stock),
           unit: adminForm.unit,
           description: adminForm.description,
-        },
+        }),
       });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result?.error || `HTTP ${response.status}`);
+      }
+
       setMessage(`Admin product created: ${result.name}`);
-      await loadProducts();
+      await handleLoadProducts();
     } catch (error) {
-      setMessage(`Admin create failed: ${toErrorMessage(error)}`);
-    } finally {
-      setBusy(false);
+      setMessage(`Admin create failed: ${error.message}`);
     }
   }
 
@@ -333,17 +227,16 @@ function App() {
             type="password"
             placeholder="Password"
           />
-          <button onClick={signup} disabled={busy}>
+          <button onClick={handleSignup} disabled={busy}>
             Signup
           </button>
-          <button onClick={login} disabled={busy}>
+          <button onClick={handleLogin} disabled={busy}>
             Login
           </button>
           <button
             className="ghost"
             onClick={() => {
-              clearSession();
-              setMessage("Logged out");
+              logout();
             }}
             disabled={busy}
           >
@@ -355,7 +248,7 @@ function App() {
       <section className="panel">
         <h2>Products (GraphQL)</h2>
         <div className="toolbar">
-          <button onClick={loadProducts} disabled={busy}>
+          <button onClick={handleLoadProducts} disabled={busy}>
             Load Products
           </button>
         </div>
@@ -367,7 +260,7 @@ function App() {
               <p>Rs {product.price}</p>
               <p>Stock: {product.stock ?? "NA"}</p>
               <button
-                onClick={() => addToCart(product)}
+                onClick={() => handleAddToCart(product)}
                 disabled={!isLoggedIn || busy}
               >
                 Add to Cart
@@ -381,10 +274,10 @@ function App() {
         <div>
           <h2>Cart</h2>
           <div className="toolbar">
-            <button onClick={loadCart} disabled={!isLoggedIn || busy}>
+            <button onClick={handleLoadCart} disabled={!isLoggedIn || busy}>
               Refresh Cart
             </button>
-            <button onClick={checkout} disabled={!isLoggedIn || busy}>
+            <button onClick={handleCheckout} disabled={!isLoggedIn || busy}>
               Checkout
             </button>
           </div>
@@ -401,11 +294,11 @@ function App() {
         <div>
           <h2>Orders</h2>
           <div className="toolbar">
-            <button onClick={loadOrders} disabled={!isLoggedIn || busy}>
+            <button onClick={handleLoadOrders} disabled={!isLoggedIn || busy}>
               My Orders
             </button>
             <button
-              onClick={loadAdminOrders}
+              onClick={handleLoadAdminOrders}
               disabled={!isLoggedIn || busy || !isAdmin}
             >
               Admin Orders
