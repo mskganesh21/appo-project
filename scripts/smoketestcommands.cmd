@@ -23,6 +23,8 @@ call :cart_flow || goto :fail
 call :grpc_internal_flow || goto :fail
 call :order_cqrs_flow || goto :fail
 call :step11_checkout_verify_flow || goto :fail
+call :step13_compensation_flow || goto :fail
+call :step16_idempotency_flow || goto :fail
 
 echo.
 echo === Smoke Test Completed Successfully ===
@@ -107,7 +109,7 @@ echo OK order CQRS routes passed. ORDER_ID=%ORDER_ID%
 exit /b 0
 
 :step11_checkout_verify_flow
-echo [7/7] Step 11 checkout verify flow...
+echo [7/9] Step 11 checkout verify flow...
 curl.exe -s -X POST "%BASE_ORDER%/checkout" -H "Content-Type: application/json" -d "{\"userId\":\"%USER_ID%\",\"currency\":\"INR\",\"items\":[{\"productId\":\"%PRODUCT_ID%\",\"price\":%PRODUCT_PRICE%,\"quantity\":1}]}" > "%TEMP%\order_checkout_step11.json" || exit /b 1
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$j = Get-Content -Raw '%TEMP%\\order_checkout_step11.json' | ConvertFrom-Json; if($j.order){$j.order.id}"`) do set STEP11_ORDER_ID=%%i
 if "%STEP11_ORDER_ID%"=="" (
@@ -118,6 +120,52 @@ if "%STEP11_ORDER_ID%"=="" (
 
 curl.exe -s -X POST "%BASE_ORDER%/orders/%STEP11_ORDER_ID%/payment/verify" -H "Content-Type: application/json" -d "{}" > "%TEMP%\order_verify_step11.json" || exit /b 1
 echo OK Step 11 verify passed. STEP11_ORDER_ID=%STEP11_ORDER_ID%
+exit /b 0
+
+:step13_compensation_flow
+echo [8/9] Step 13 compensation path...
+curl.exe -s -X POST "%BASE_ORDER%/checkout" -H "Content-Type: application/json" -d "{\"userId\":\"%USER_ID%\",\"currency\":\"INR\",\"items\":[{\"productId\":\"%PRODUCT_ID%\",\"price\":%PRODUCT_PRICE%,\"quantity\":999999}]}" > "%TEMP%\order_checkout_step13_fail.json" || exit /b 1
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$j = Get-Content -Raw '%TEMP%\\order_checkout_step13_fail.json' | ConvertFrom-Json; if($j.order){$j.order.status}"`) do set STEP13_STATUS=%%i
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$j = Get-Content -Raw '%TEMP%\\order_checkout_step13_fail.json' | ConvertFrom-Json; if($j.order){$j.order.refundRequired}"`) do set STEP13_REFUND=%%i
+
+if /I not "%STEP13_STATUS%"=="FAILED" (
+  echo Step 13 failed: expected status FAILED.
+  type "%TEMP%\order_checkout_step13_fail.json"
+  exit /b 1
+)
+
+if /I not "%STEP13_REFUND%"=="True" (
+  echo Step 13 failed: expected refundRequired=true.
+  type "%TEMP%\order_checkout_step13_fail.json"
+  exit /b 1
+)
+
+echo OK Step 13 compensation path passed.
+exit /b 0
+
+:step16_idempotency_flow
+echo [9/9] Step 16 idempotency path...
+set IDEMPOTENCY_KEY=idem-%RANDOM%%RANDOM%
+curl.exe -s -X POST "%BASE_ORDER%/checkout" -H "Content-Type: application/json" -H "x-idempotency-key: %IDEMPOTENCY_KEY%" -d "{\"userId\":\"%USER_ID%\",\"currency\":\"INR\",\"items\":[{\"productId\":\"%PRODUCT_ID%\",\"price\":%PRODUCT_PRICE%,\"quantity\":1}]}" > "%TEMP%\order_checkout_idem_1.json" || exit /b 1
+curl.exe -s -X POST "%BASE_ORDER%/checkout" -H "Content-Type: application/json" -H "x-idempotency-key: %IDEMPOTENCY_KEY%" -d "{\"userId\":\"%USER_ID%\",\"currency\":\"INR\",\"items\":[{\"productId\":\"%PRODUCT_ID%\",\"price\":%PRODUCT_PRICE%,\"quantity\":1}]}" > "%TEMP%\order_checkout_idem_2.json" || exit /b 1
+
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$j = Get-Content -Raw '%TEMP%\\order_checkout_idem_1.json' | ConvertFrom-Json; if($j.order){$j.order.id}"`) do set IDEM_ORDER_1=%%i
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$j = Get-Content -Raw '%TEMP%\\order_checkout_idem_2.json' | ConvertFrom-Json; if($j.order){$j.order.id}"`) do set IDEM_ORDER_2=%%i
+
+if "%IDEM_ORDER_1%"=="" (
+  echo Step 16 failed: first order id missing.
+  type "%TEMP%\order_checkout_idem_1.json"
+  exit /b 1
+)
+
+if not "%IDEM_ORDER_1%"=="%IDEM_ORDER_2%" (
+  echo Step 16 failed: repeated idempotent call returned different order id.
+  type "%TEMP%\order_checkout_idem_1.json"
+  type "%TEMP%\order_checkout_idem_2.json"
+  exit /b 1
+)
+
+echo OK Step 16 idempotency path passed. ORDER_ID=%IDEM_ORDER_1%
 exit /b 0
 
 :json_get

@@ -5,6 +5,8 @@ import {
   addOrderAuditLog,
   getOrderById,
   updateOrder,
+  saveIdempotencyRecord,
+  getIdempotencyRecord,
 } from "../store/orderStore.js";
 
 async function checkoutCommand({
@@ -12,8 +14,10 @@ async function checkoutCommand({
   items,
   currency = "INR",
   simulateAuditFailure = false,
+  idempotencyKey,
   correlationId,
   paymentClient,
+  productClient,
 }) {
   if (!userId || !Array.isArray(items) || items.length === 0) {
     throw new Error("Invalid checkout payload");
@@ -27,6 +31,20 @@ async function checkoutCommand({
 
   if (totalAmount <= 0) {
     throw new Error("Order total must be greater than zero");
+  }
+
+  if (idempotencyKey) {
+    const existingRecord = getIdempotencyRecord(userId, idempotencyKey);
+    if (existingRecord) {
+      const existingOrder = getOrderById(existingRecord.orderId);
+      if (existingOrder) {
+        return {
+          order: existingOrder,
+          idempotencyKey,
+          replayed: true,
+        };
+      }
+    }
   }
 
   const order = runLocalTransaction(() => {
@@ -53,6 +71,19 @@ async function checkoutCommand({
       eventType: "ORDER_CREATED",
       details: { userId, itemCount: items.length, totalAmount, correlationId },
     });
+
+    if (idempotencyKey) {
+      saveIdempotencyRecord({
+        userId,
+        idempotencyKey,
+        orderId: createdOrder.id,
+      });
+      addOrderAuditLog({
+        orderId: createdOrder.id,
+        eventType: "IDEMPOTENCY_KEY_REGISTERED",
+        details: { idempotencyKey },
+      });
+    }
 
     return createdOrder;
   });
@@ -107,9 +138,98 @@ async function checkoutCommand({
     return nextOrder;
   });
 
+  const paymentVerification = await paymentClient.verifyPaymentStatus({
+    paymentId: paymentSession.payment_id,
+    orderId: order.id,
+    correlationId,
+  });
+
+  const paymentStatus = (paymentVerification.status || "UNKNOWN").toUpperCase();
+  if (paymentStatus !== "PAID") {
+    const failedOrder = runLocalTransaction(() => {
+      const nextOrder = updateOrder(order.id, {
+        status: "FAILED",
+        failureReason: "PAYMENT_NOT_COMPLETED",
+        payment: {
+          ...(updatedOrder.payment || {}),
+          status: paymentStatus,
+        },
+      });
+      addOrderAuditLog({
+        orderId: order.id,
+        eventType: "CHECKOUT_FAILED_PAYMENT_NOT_PAID",
+        details: { paymentStatus },
+      });
+
+      return nextOrder;
+    });
+
+    return {
+      order: failedOrder,
+      paymentSession,
+      paymentVerification,
+    };
+  }
+
+  try {
+    await productClient.deductStock(items, correlationId);
+  } catch (error) {
+    const compensatedOrder = runLocalTransaction(() => {
+      const nextOrder = updateOrder(order.id, {
+        status: "FAILED",
+        failureReason: "STOCK_DEDUCTION_FAILED",
+        refundRequired: true,
+        refundReason: "STOCK_DEDUCTION_FAILED",
+        payment: {
+          ...(updatedOrder.payment || {}),
+          status: "PAID",
+        },
+      });
+
+      addOrderAuditLog({
+        orderId: order.id,
+        eventType: "CHECKOUT_COMPENSATION_REQUIRED",
+        details: {
+          reason: "STOCK_DEDUCTION_FAILED",
+          error: error.message,
+        },
+      });
+
+      return nextOrder;
+    });
+
+    return {
+      order: compensatedOrder,
+      paymentSession,
+      paymentVerification,
+      compensationRequired: true,
+    };
+  }
+
+  const confirmedOrder = runLocalTransaction(() => {
+    const nextOrder = updateOrder(order.id, {
+      status: "CONFIRMED",
+      payment: {
+        ...(updatedOrder.payment || {}),
+        status: "PAID",
+        verifiedAt: new Date().toISOString(),
+      },
+    });
+
+    addOrderAuditLog({
+      orderId: order.id,
+      eventType: "CHECKOUT_CONFIRMED",
+      details: { paymentStatus: "PAID" },
+    });
+
+    return nextOrder;
+  });
+
   return {
-    order: updatedOrder,
+    order: confirmedOrder,
     paymentSession,
+    paymentVerification,
+    idempotencyKey,
   };
 }
 

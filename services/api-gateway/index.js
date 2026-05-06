@@ -5,11 +5,16 @@ import axios from "axios";
 import jwt from "jsonwebtoken";
 import { buildSchema } from "graphql";
 import { createHandler } from "graphql-http/lib/use/express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 4000;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const clientPath = path.resolve(__dirname, "../../client");
 
 const serviceName = process.env.SERVICE_NAME || "api-gateway";
 const jwtSecret = process.env.JWT_SECRET || "your-secret-key-change-in-prod";
@@ -68,6 +73,24 @@ function requireAuth(req, res, next) {
   next();
 }
 
+function requireAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({
+      error: "Unauthorized",
+      correlationId: req.correlationId,
+    });
+  }
+
+  if (req.user.role !== "admin") {
+    return res.status(403).json({
+      error: "Forbidden",
+      correlationId: req.correlationId,
+    });
+  }
+
+  next();
+}
+
 async function serviceRequest(req, serviceUrl, options) {
   const response = await axios({
     baseURL: serviceUrl,
@@ -75,6 +98,9 @@ async function serviceRequest(req, serviceUrl, options) {
     ...options,
     headers: {
       "x-correlation-id": req.correlationId,
+      ...(req.header("x-idempotency-key")
+        ? { "x-idempotency-key": req.header("x-idempotency-key") }
+        : {}),
       ...(req.header("Authorization")
         ? { Authorization: req.header("Authorization") }
         : {}),
@@ -276,6 +302,119 @@ app.post("/api/checkout", requireAuth, async (req, res) => {
   } catch (err) {
     handleUpstreamError(err, req, res);
   }
+});
+
+app.get("/api/orders/me", requireAuth, async (req, res) => {
+  try {
+    const data = await serviceRequest(req, serviceUrls.order, {
+      method: "GET",
+      url: `/orders/user/${req.user.id}`,
+    });
+    res.json(data);
+  } catch (err) {
+    handleUpstreamError(err, req, res);
+  }
+});
+
+app.get("/api/orders/admin", requireAdmin, async (req, res) => {
+  try {
+    const data = await serviceRequest(req, serviceUrls.order, {
+      method: "GET",
+      url: "/orders/admin",
+    });
+    res.json(data);
+  } catch (err) {
+    handleUpstreamError(err, req, res);
+  }
+});
+
+app.post("/api/cart/items", requireAuth, async (req, res) => {
+  try {
+    const data = await serviceRequest(req, serviceUrls.cart, {
+      method: "POST",
+      url: "/cart/items",
+      data: {
+        ...req.body,
+        userId: req.user.id,
+      },
+    });
+    res.status(201).json(data);
+  } catch (err) {
+    handleUpstreamError(err, req, res);
+  }
+});
+
+app.put("/api/cart/items/:itemId", requireAuth, async (req, res) => {
+  try {
+    const data = await serviceRequest(req, serviceUrls.cart, {
+      method: "PUT",
+      url: `/cart/items/${req.params.itemId}`,
+      data: {
+        ...req.body,
+        userId: req.user.id,
+      },
+    });
+    res.json(data);
+  } catch (err) {
+    handleUpstreamError(err, req, res);
+  }
+});
+
+app.delete("/api/cart/items/:itemId", requireAuth, async (req, res) => {
+  try {
+    const data = await serviceRequest(req, serviceUrls.cart, {
+      method: "DELETE",
+      url: `/cart/items/${req.params.itemId}`,
+      data: { userId: req.user.id },
+    });
+    res.json(data);
+  } catch (err) {
+    handleUpstreamError(err, req, res);
+  }
+});
+
+app.get("/api/cart", requireAuth, async (req, res) => {
+  try {
+    const data = await serviceRequest(req, serviceUrls.cart, {
+      method: "GET",
+      url: `/cart/${req.user.id}`,
+    });
+    res.json(data);
+  } catch (err) {
+    handleUpstreamError(err, req, res);
+  }
+});
+
+app.post("/api/admin/products", requireAdmin, async (req, res) => {
+  try {
+    const data = await serviceRequest(req, serviceUrls.product, {
+      method: "POST",
+      url: "/products",
+      data: req.body,
+    });
+    res.status(201).json(data);
+  } catch (err) {
+    handleUpstreamError(err, req, res);
+  }
+});
+
+app.put("/api/admin/products/:id", requireAdmin, async (req, res) => {
+  try {
+    const data = await serviceRequest(req, serviceUrls.product, {
+      method: "PUT",
+      url: `/products/${req.params.id}`,
+      data: req.body,
+    });
+    res.json(data);
+  } catch (err) {
+    handleUpstreamError(err, req, res);
+  }
+});
+
+app.use("/app", express.static(clientPath));
+
+app.get("/app", (_req, res) => {
+  res.sendFile(path.join(clientPath, "index.html"));
 });
 
 app.use(

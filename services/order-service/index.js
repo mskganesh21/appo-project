@@ -25,6 +25,8 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 4004;
 const serviceName = process.env.SERVICE_NAME || "order-service";
+const productServiceUrl =
+  process.env.PRODUCT_SERVICE_URL || "http://localhost:4002";
 
 app.use(express.json());
 
@@ -106,19 +108,83 @@ app.post("/internal/grpc/payment-verify", async (req, res, next) => {
 app.post("/checkout", async (req, res, next) => {
   try {
     const { userId, items, currency, simulateAuditFailure } = req.body;
+    const idempotencyKey = req.header("x-idempotency-key") || null;
+
+    const productClient = {
+      deductStock: async (checkoutItems, correlationId) => {
+        const deducted = [];
+
+        try {
+          for (const item of checkoutItems) {
+            const quantityToDeduct = Number(item.quantity || 0);
+            if (!item.productId || quantityToDeduct <= 0) {
+              throw new Error("Invalid item for stock deduction");
+            }
+
+            const response = await fetch(
+              `${productServiceUrl}/products/${item.productId}/stock`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-correlation-id": correlationId,
+                },
+                body: JSON.stringify({ quantity: -quantityToDeduct }),
+              },
+            );
+
+            if (!response.ok) {
+              const message = await response.text();
+              throw new Error(
+                `Stock deduction failed for product ${item.productId}: ${message}`,
+              );
+            }
+
+            deducted.push({
+              productId: item.productId,
+              quantity: quantityToDeduct,
+            });
+          }
+        } catch (error) {
+          for (const entry of deducted) {
+            try {
+              await fetch(
+                `${productServiceUrl}/products/${entry.productId}/stock`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "x-correlation-id": correlationId,
+                  },
+                  body: JSON.stringify({ quantity: entry.quantity }),
+                },
+              );
+            } catch (_rollbackError) {
+              // best-effort rollback; order compensation flow still handles failure
+            }
+          }
+
+          throw error;
+        }
+      },
+    };
 
     const result = await checkoutCommand({
       userId,
       items,
       currency,
       simulateAuditFailure,
+      idempotencyKey,
       correlationId: req.correlationId,
       paymentClient: {
         createPaymentSession,
+        verifyPaymentStatus,
       },
+      productClient,
     });
 
-    res.status(201).json(result);
+    const statusCode = result.replayed ? 200 : 201;
+    res.status(statusCode).json(result);
   } catch (error) {
     next(error);
   }

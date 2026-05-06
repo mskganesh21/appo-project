@@ -2,11 +2,13 @@ import crypto from "node:crypto";
 
 const orders = [];
 const orderAuditLogs = [];
+const idempotencyRecords = new Map();
 
 function cloneState() {
   return {
     orders: structuredClone(orders),
     orderAuditLogs: structuredClone(orderAuditLogs),
+    idempotencyRecords: structuredClone(Object.fromEntries(idempotencyRecords)),
   };
 }
 
@@ -15,6 +17,12 @@ function restoreState(snapshot) {
   orderAuditLogs.length = 0;
   orders.push(...snapshot.orders);
   orderAuditLogs.push(...snapshot.orderAuditLogs);
+
+  idempotencyRecords.clear();
+  const restored = snapshot.idempotencyRecords || {};
+  Object.entries(restored).forEach(([key, value]) => {
+    idempotencyRecords.set(key, value);
+  });
 }
 
 function runLocalTransaction(work) {
@@ -79,6 +87,27 @@ function updateOrder(orderId, updates) {
   return orders[index];
 }
 
+function makeIdempotencyRecordKey(userId, idempotencyKey) {
+  return `${userId}::${idempotencyKey}`;
+}
+
+function saveIdempotencyRecord({ userId, idempotencyKey, orderId }) {
+  const recordKey = makeIdempotencyRecordKey(userId, idempotencyKey);
+  idempotencyRecords.set(recordKey, {
+    userId,
+    idempotencyKey,
+    orderId,
+    createdAt: new Date().toISOString(),
+  });
+
+  return idempotencyRecords.get(recordKey);
+}
+
+function getIdempotencyRecord(userId, idempotencyKey) {
+  const recordKey = makeIdempotencyRecordKey(userId, idempotencyKey);
+  return idempotencyRecords.get(recordKey) || null;
+}
+
 export {
   runLocalTransaction,
   addOrder,
@@ -88,4 +117,6 @@ export {
   getAllOrders,
   getOrderAuditLogs,
   updateOrder,
+  saveIdempotencyRecord,
+  getIdempotencyRecord,
 };
