@@ -1,4 +1,9 @@
-import { getOrderById } from "../store/orderStore.js";
+import {
+  getOrderById,
+  getOrdersByUserId,
+  getAllOrders,
+  getOrderAuditLogs,
+} from "../store/orderStore.js";
 
 function getOrderByIdQuery(orderId) {
   const order = getOrderById(orderId);
@@ -21,4 +26,17 @@ function getAdminOrdersQuery() {
   return getAllOrders();
 }
 
-export { getOrderByIdQuery, getMyOrdersQuery, getAdminOrdersQuery };
+function getOrderAuditLogsQuery(orderId) {
+  if (!orderId) {
+    throw new Error("orderId is required");
+  }
+
+  return getOrderAuditLogs(orderId);
+}
+
+export {
+  getOrderByIdQuery,
+  getMyOrdersQuery,
+  getAdminOrdersQuery,
+  getOrderAuditLogsQuery,
+};

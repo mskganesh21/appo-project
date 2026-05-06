@@ -1,10 +1,17 @@
 import crypto from "node:crypto";
-import {addOrder, getOrderById, updateOrder} from '../store/orderStore.js';
+import {
+  runLocalTransaction,
+  addOrder,
+  addOrderAuditLog,
+  getOrderById,
+  updateOrder,
+} from "../store/orderStore.js";
 
 async function checkoutCommand({
   userId,
   items,
   currency = "INR",
+  simulateAuditFailure = false,
   correlationId,
   paymentClient,
 }) {
@@ -22,38 +29,143 @@ async function checkoutCommand({
     throw new Error("Order total must be greater than zero");
   }
 
-  const order = addOrder({
-    id: `ord-${crypto.randomUUID()}`,
-    userId,
-    items,
-    totalAmount,
-    currency,
-    status: "PENDING",
-    payment: {
-      status: "NOT_INITIATED",
-    },
-    refundRequired: false,
-    createdAt: new Date().toISOString(),
+  const order = runLocalTransaction(() => {
+    const createdOrder = addOrder({
+      id: `ord-${crypto.randomUUID()}`,
+      userId,
+      items,
+      totalAmount,
+      currency,
+      status: "PENDING",
+      payment: {
+        status: "NOT_INITIATED",
+      },
+      refundRequired: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    if (simulateAuditFailure) {
+      throw new Error("Simulated audit log failure");
+    }
+
+    addOrderAuditLog({
+      orderId: createdOrder.id,
+      eventType: "ORDER_CREATED",
+      details: { userId, itemCount: items.length, totalAmount, correlationId },
+    });
+
+    return createdOrder;
   });
 
-  const paymentSession = await paymentClient.createPaymentSession({
-    orderId: order.id,
-    amount: totalAmount,
-    currency,
-    correlationId,
-  });
+  let paymentSession;
+  try {
+    paymentSession = await paymentClient.createPaymentSession({
+      orderId: order.id,
+      amount: totalAmount,
+      currency,
+      correlationId,
+    });
+  } catch (error) {
+    runLocalTransaction(() => {
+      updateOrder(order.id, {
+        status: "FAILED",
+        failureReason: "PAYMENT_SESSION_CREATION_FAILED",
+        payment: {
+          status: "FAILED",
+          error: error.message,
+        },
+      });
 
-  const updatedOrder = updateOrder(order.id, {
-    payment: {
-      status: paymentSession.status || "PENDING",
-      paymentId: paymentSession.payment_id,
-      paymentUrl: paymentSession.payment_url,
-    },
+      addOrderAuditLog({
+        orderId: order.id,
+        eventType: "PAYMENT_SESSION_FAILED",
+        details: { error: error.message, correlationId },
+      });
+    });
+
+    throw error;
+  }
+
+  const updatedOrder = runLocalTransaction(() => {
+    const nextOrder = updateOrder(order.id, {
+      payment: {
+        status: paymentSession.status || "PENDING",
+        paymentId: paymentSession.payment_id,
+        paymentUrl: paymentSession.payment_url,
+      },
+    });
+
+    addOrderAuditLog({
+      orderId: order.id,
+      eventType: "PAYMENT_SESSION_CREATED",
+      details: {
+        paymentId: paymentSession.payment_id,
+        paymentStatus: paymentSession.status || "PENDING",
+      },
+    });
+
+    return nextOrder;
   });
 
   return {
     order: updatedOrder,
     paymentSession,
+  };
+}
+
+async function verifyPaymentForOrderCommand({
+  orderId,
+  correlationId,
+  paymentClient,
+}) {
+  const existingOrder = getOrderById(orderId);
+  if (!existingOrder) {
+    throw new Error("Order not found");
+  }
+
+  const paymentId = existingOrder.payment?.paymentId;
+  if (!paymentId) {
+    throw new Error("Payment not initialized for this order");
+  }
+
+  const verification = await paymentClient.verifyPaymentStatus({
+    paymentId,
+    orderId: existingOrder.id,
+    correlationId,
+  });
+
+  const normalizedPaymentStatus = (
+    verification.status || "UNKNOWN"
+  ).toUpperCase();
+  const nextOrderStatus =
+    normalizedPaymentStatus === "PAID" ? "CONFIRMED" : "PENDING";
+
+  const updatedOrder = runLocalTransaction(() => {
+    const updated = updateOrder(existingOrder.id, {
+      status: nextOrderStatus,
+      payment: {
+        ...(existingOrder.payment || {}),
+        status: normalizedPaymentStatus,
+        verifiedAt: new Date().toISOString(),
+      },
+    });
+
+    addOrderAuditLog({
+      orderId: existingOrder.id,
+      eventType: "PAYMENT_STATUS_VERIFIED",
+      details: {
+        paymentId,
+        paymentStatus: normalizedPaymentStatus,
+        orderStatus: nextOrderStatus,
+      },
+    });
+
+    return updated;
+  });
+
+  return {
+    order: updatedOrder,
+    paymentVerification: verification,
   };
 }
 
@@ -63,7 +175,15 @@ function confirmOrderCommand(orderId) {
     throw new Error("Order not found");
   }
 
-  return updateOrder(orderId, { status: "CONFIRMED" });
+  return runLocalTransaction(() => {
+    const updated = updateOrder(orderId, { status: "CONFIRMED" });
+    addOrderAuditLog({
+      orderId,
+      eventType: "ORDER_CONFIRMED",
+      details: { previousStatus: existingOrder.status },
+    });
+    return updated;
+  });
 }
 
 function failOrderCommand(orderId, reason = "UNKNOWN") {
@@ -72,9 +192,17 @@ function failOrderCommand(orderId, reason = "UNKNOWN") {
     throw new Error("Order not found");
   }
 
-  return updateOrder(orderId, {
-    status: "FAILED",
-    failureReason: reason,
+  return runLocalTransaction(() => {
+    const updated = updateOrder(orderId, {
+      status: "FAILED",
+      failureReason: reason,
+    });
+    addOrderAuditLog({
+      orderId,
+      eventType: "ORDER_FAILED",
+      details: { reason, previousStatus: existingOrder.status },
+    });
+    return updated;
   });
 }
 
@@ -84,18 +212,24 @@ function requestRefundCommand(orderId, reason = "COMPENSATION_REQUIRED") {
     throw new Error("Order not found");
   }
 
-  return updateOrder(orderId, {
-    refundRequired: true,
-    refundReason: reason,
+  return runLocalTransaction(() => {
+    const updated = updateOrder(orderId, {
+      refundRequired: true,
+      refundReason: reason,
+    });
+    addOrderAuditLog({
+      orderId,
+      eventType: "REFUND_REQUESTED",
+      details: { reason },
+    });
+    return updated;
   });
 }
 
 export {
   checkoutCommand,
+  verifyPaymentForOrderCommand,
   confirmOrderCommand,
   failOrderCommand,
   requestRefundCommand,
 };
-
-
-

@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 
 import {
   checkoutCommand,
+  verifyPaymentForOrderCommand,
   confirmOrderCommand,
   failOrderCommand,
   requestRefundCommand,
@@ -16,7 +17,8 @@ import {
   getOrderByIdQuery,
   getMyOrdersQuery,
   getAdminOrdersQuery,
-} from "./queries/OrderQueries.js";
+  getOrderAuditLogsQuery,
+} from "./queries/orderQueries.js";
 
 dotenv.config();
 
@@ -103,12 +105,13 @@ app.post("/internal/grpc/payment-verify", async (req, res, next) => {
 
 app.post("/checkout", async (req, res, next) => {
   try {
-    const { userId, items, currency } = req.body;
+    const { userId, items, currency, simulateAuditFailure } = req.body;
 
     const result = await checkoutCommand({
       userId,
       items,
       currency,
+      simulateAuditFailure,
       correlationId: req.correlationId,
       paymentClient: {
         createPaymentSession,
@@ -125,6 +128,22 @@ app.post("/orders/:orderId/confirm", (req, res, next) => {
   try {
     const order = confirmOrderCommand(req.params.orderId);
     res.json(order);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/orders/:orderId/payment/verify", async (req, res, next) => {
+  try {
+    const result = await verifyPaymentForOrderCommand({
+      orderId: req.params.orderId,
+      correlationId: req.correlationId,
+      paymentClient: {
+        verifyPaymentStatus,
+      },
+    });
+
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -177,17 +196,56 @@ app.get("/orders/admin", (_req, res, next) => {
   }
 });
 
+app.get("/orders/:orderId/audit", (req, res, next) => {
+  try {
+    const items = getOrderAuditLogsQuery(req.params.orderId);
+    res.json({ items, count: items.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/internal/transaction/failure-test", async (req, res, next) => {
+  try {
+    await checkoutCommand({
+      userId: req.body.userId || "tx-test-user",
+      items: req.body.items || [
+        { productId: "tx-test-product", quantity: 1, price: 100 },
+      ],
+      currency: req.body.currency || "INR",
+      simulateAuditFailure: true,
+      correlationId: req.correlationId,
+      paymentClient: {
+        createPaymentSession,
+      },
+    });
+
+    res.status(500).json({ error: "Unexpected success" });
+  } catch (error) {
+    res.status(200).json({
+      message: "Transaction rollback verified",
+      rolledBack: true,
+      reason: error.message,
+      correlationId: req.correlationId,
+    });
+  }
+});
+
 app.use((_req, res) => {
   res.status(404).json({ error: "Not Found" });
 });
 
 app.use((err, req, res, _next) => {
   console.error(`[${serviceName}] error cid=${req.correlationId}`, err);
-  const statusCode = err.message.includes("not found")
-    ? 404
-    : err.message.includes("Invalid") || err.message.includes("required")
-      ? 400
-      : 500;
+  let statusCode = 500;
+  if (err.message.includes("not found")) {
+    statusCode = 404;
+  } else if (
+    err.message.includes("Invalid") ||
+    err.message.includes("required")
+  ) {
+    statusCode = 400;
+  }
   res.status(statusCode).json({
     error: err.message || "Internal Server Error",
     correlationId: req.correlationId,

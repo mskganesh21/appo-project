@@ -1,6 +1,13 @@
 import express from "express";
 import dotenv from "dotenv";
-import {listProducts, getProductById, createProduct, updateProduct, updateStock} from './product-service.js';
+import crypto from "node:crypto";
+import {
+  listProducts,
+  getProductById,
+  createProduct,
+  updateProduct,
+  updateStock,
+} from "./product-service.js";
 
 dotenv.config();
 
@@ -44,8 +51,8 @@ app.get("/health", (_req, res) => {
 app.get("/products", (req, res, next) => {
   try {
     const category = req.query.category || null;
-    const limit = parseInt(req.query.limit) || 100;
-    const offset = parseInt(req.query.offset) || 0;
+    const limit = Number.parseInt(req.query.limit, 10) || 100;
+    const offset = Number.parseInt(req.query.offset, 10) || 0;
 
     const result = listProducts({ category, limit, offset });
     res.json(result);

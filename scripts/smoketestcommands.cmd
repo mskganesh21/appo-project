@@ -22,6 +22,7 @@ call :product_flow || goto :fail
 call :cart_flow || goto :fail
 call :grpc_internal_flow || goto :fail
 call :order_cqrs_flow || goto :fail
+call :step11_checkout_verify_flow || goto :fail
 
 echo.
 echo === Smoke Test Completed Successfully ===
@@ -105,6 +106,20 @@ curl.exe -s -X POST "%BASE_ORDER%/orders/%ORDER_ID%/refund-request" -H "Content-
 echo OK order CQRS routes passed. ORDER_ID=%ORDER_ID%
 exit /b 0
 
+:step11_checkout_verify_flow
+echo [7/7] Step 11 checkout verify flow...
+curl.exe -s -X POST "%BASE_ORDER%/checkout" -H "Content-Type: application/json" -d "{\"userId\":\"%USER_ID%\",\"currency\":\"INR\",\"items\":[{\"productId\":\"%PRODUCT_ID%\",\"price\":%PRODUCT_PRICE%,\"quantity\":1}]}" > "%TEMP%\order_checkout_step11.json" || exit /b 1
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$j = Get-Content -Raw '%TEMP%\\order_checkout_step11.json' | ConvertFrom-Json; if($j.order){$j.order.id}"`) do set STEP11_ORDER_ID=%%i
+if "%STEP11_ORDER_ID%"=="" (
+  echo Step 11 failed: unable to read order id.
+  type "%TEMP%\order_checkout_step11.json"
+  exit /b 1
+)
+
+curl.exe -s -X POST "%BASE_ORDER%/orders/%STEP11_ORDER_ID%/payment/verify" -H "Content-Type: application/json" -d "{}" > "%TEMP%\order_verify_step11.json" || exit /b 1
+echo OK Step 11 verify passed. STEP11_ORDER_ID=%STEP11_ORDER_ID%
+exit /b 0
+
 :json_get
 set FILE_PATH=%~1
 set FIELD_NAME=%~2
@@ -121,6 +136,3 @@ exit /b 1
 :end
 endlocal
 exit /b 0
-
-
-

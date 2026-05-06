@@ -1,8 +1,46 @@
+import crypto from "node:crypto";
+
 const orders = [];
+const orderAuditLogs = [];
+
+function cloneState() {
+  return {
+    orders: structuredClone(orders),
+    orderAuditLogs: structuredClone(orderAuditLogs),
+  };
+}
+
+function restoreState(snapshot) {
+  orders.length = 0;
+  orderAuditLogs.length = 0;
+  orders.push(...snapshot.orders);
+  orderAuditLogs.push(...snapshot.orderAuditLogs);
+}
+
+function runLocalTransaction(work) {
+  const snapshot = cloneState();
+
+  try {
+    return work();
+  } catch (error) {
+    restoreState(snapshot);
+    throw error;
+  }
+}
 
 function addOrder(order) {
   orders.push(order);
   return order;
+}
+
+function addOrderAuditLog(auditRecord) {
+  orderAuditLogs.push({
+    id: `audit-${crypto.randomUUID()}`,
+    createdAt: new Date().toISOString(),
+    ...auditRecord,
+  });
+
+  return orderAuditLogs[orderAuditLogs.length - 1];
 }
 
 function getOrderById(orderId) {
@@ -15,6 +53,14 @@ function getOrdersByUserId(userId) {
 
 function getAllOrders() {
   return [...orders];
+}
+
+function getOrderAuditLogs(orderId = null) {
+  if (!orderId) {
+    return [...orderAuditLogs];
+  }
+
+  return orderAuditLogs.filter((log) => log.orderId === orderId);
 }
 
 function updateOrder(orderId, updates) {
@@ -33,4 +79,13 @@ function updateOrder(orderId, updates) {
   return orders[index];
 }
 
-export { addOrder, getOrderById, getOrdersByUserId, getAllOrders, updateOrder };
+export {
+  runLocalTransaction,
+  addOrder,
+  addOrderAuditLog,
+  getOrderById,
+  getOrdersByUserId,
+  getAllOrders,
+  getOrderAuditLogs,
+  updateOrder,
+};

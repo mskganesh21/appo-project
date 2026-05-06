@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
-import { signup, login, verifyToken } from "./auth-service.js";
+import crypto from "node:crypto";
+import { signup, login, verifyToken, seedAdminUser } from "./auth-service.js";
 
 dotenv.config();
 
@@ -43,13 +44,13 @@ app.get("/health", (_req, res) => {
 
 app.post("/signup", async (req, res, next) => {
   try {
-    const { email, name, password } = req.body;
+    const { email, name, password, role } = req.body;
 
     if (!email || !name || !password) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const user = await signup({ email, name, password });
+    const user = await signup({ email, name, password, role });
     res.status(201).json({ user });
   } catch (error) {
     next(error);
@@ -86,17 +87,63 @@ app.get("/verify", (req, res, next) => {
   }
 });
 
+app.get("/protected", (req, res, next) => {
+  try {
+    const token = req.header("Authorization")?.replace("Bearer ", "");
+
+    if (!token) {
+      return res.status(401).json({ error: "No token provided" });
+    }
+
+    const decoded = verifyToken(token);
+    res.json({
+      message: "Access granted",
+      user: {
+        id: decoded.id,
+        email: decoded.email,
+        role: decoded.role,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/admin/protected", (req, res, next) => {
+  try {
+    const token = req.header("Authorization")?.replace("Bearer ", "");
+
+    if (!token) {
+      return res.status(401).json({ error: "No token provided" });
+    }
+
+    const decoded = verifyToken(token);
+    if (decoded.role !== "admin") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    res.json({ message: "Admin access granted", user: decoded });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use((_req, res) => {
   res.status(404).json({ error: "Not Found" });
 });
 
 app.use((err, req, res, _next) => {
   console.error(`[${serviceName}] error cid=${req.correlationId}`, err);
-  const statusCode = err.message.includes("not found")
-    ? 404
-    : err.message.includes("Invalid")
-      ? 401
-      : 500;
+  let statusCode = 500;
+  if (err.message.includes("already exists")) {
+    statusCode = 409;
+  } else if (err.message.includes("not found")) {
+    statusCode = 404;
+  } else if (err.message.includes("Forbidden")) {
+    statusCode = 403;
+  } else if (err.message.includes("Invalid")) {
+    statusCode = 401;
+  }
   res.status(statusCode).json({
     error: err.message || "Internal Server Error",
     correlationId: req.correlationId,
@@ -104,5 +151,18 @@ app.use((err, req, res, _next) => {
 });
 
 app.listen(port, () => {
-  console.log(`[${serviceName}] listening on port ${port}`);
+  seedAdminUser()
+    .then((adminUser) => {
+      if (adminUser) {
+        console.log(
+          `[${serviceName}] default admin bootstrapped for ${adminUser.email}`,
+        );
+      }
+    })
+    .catch((error) => {
+      console.error(`[${serviceName}] failed to bootstrap admin`, error);
+    })
+    .finally(() => {
+      console.log(`[${serviceName}] listening on port ${port}`);
+    });
 });
