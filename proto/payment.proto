@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package payment;
+
+option java_multiple_files = true;
+option java_package = "com.appo.payment.proto";
+option java_outer_classname = "PaymentProto";
+
+service PaymentService {
+    rpc CreatePaymentSession(CreatePaymentSessionRequest) returns (CreatePaymentSessionResponse);
+    rpc VerifyPaymentStatus(VerifyPaymentStatusRequest) returns (VerifyPaymentStatusResponse);
+}
+
+message CreatePaymentSessionRequest {
+    string order_id = 1;
+    double amount = 2;
+    string currency = 3;
+    string correlation_id = 4;
+}
+
+message CreatePaymentSessionResponse {
+    bool success = 1;
+    string payment_id = 2;
+    string payment_url = 3;
+    string status = 4;
+    string message = 5;
+}
+
+message VerifyPaymentStatusRequest {
+    string payment_id = 1;
+    string order_id = 2;
+    string correlation_id = 3;
+}
+
+message VerifyPaymentStatusResponse {
+    bool success = 1;
+    string payment_id = 2;
+    string order_id = 3;
+    string status = 4;
+    string message = 5;
+}
+
+

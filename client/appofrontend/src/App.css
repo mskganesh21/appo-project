@@ -1,0 +1,151 @@
+.app-shell {
+  width: min(1180px, 94vw);
+  margin: 24px auto 36px;
+  display: grid;
+  gap: 14px;
+}
+
+.masthead {
+  background: linear-gradient(120deg, #fffbe8, #fff1d9);
+  border: 1px solid #d7c7a7;
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.masthead h1 {
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.masthead p {
+  margin: 6px 0 0;
+  color: #594a2f;
+}
+
+.status-strip {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.status-strip span {
+  background: rgba(53, 76, 59, 0.1);
+  color: #22322a;
+  border: 1px solid rgba(53, 76, 59, 0.2);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.86rem;
+}
+
+.panel {
+  border: 1px solid #d7c7a7;
+  background: rgba(255, 255, 255, 0.86);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.form-row,
+.toolbar,
+.stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stack {
+  flex-direction: column;
+}
+
+input,
+button {
+  border-radius: 10px;
+  border: 1px solid #cdbd9c;
+  padding: 9px 10px;
+  font: inherit;
+}
+
+input {
+  background: #fff;
+  color: #212121;
+}
+
+button {
+  background: #35503e;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.05);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: transparent;
+  color: #2d4736;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.product-card {
+  border: 1px solid #e1d4b9;
+  border-radius: 12px;
+  padding: 10px;
+  background: #fffdf8;
+  display: grid;
+  gap: 7px;
+  animation: rise 220ms ease;
+}
+
+.product-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+pre {
+  margin: 8px 0 0;
+  background: #fbf7ef;
+  border: 1px dashed #ccb88e;
+  border-radius: 10px;
+  padding: 10px;
+  min-height: 86px;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(3px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+}
