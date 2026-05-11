@@ -297,65 +297,14 @@ function App() {
             <button onClick={handleLoadOrders} disabled={!isLoggedIn || busy}>
               My Orders
             </button>
-            <button
+            {/* <button
               onClick={handleLoadAdminOrders}
               disabled={!isLoggedIn || busy || !isAdmin}
             >
               Admin Orders
-            </button>
+            </button> */}
           </div>
           <pre>{JSON.stringify(orders, null, 2)}</pre>
-        </div>
-
-        <div>
-          <h2>Admin Product Create</h2>
-          <div className="stack">
-            <input
-              value={adminForm.name}
-              onChange={(e) =>
-                setAdminForm((s) => ({ ...s, name: e.target.value }))
-              }
-              placeholder="name"
-            />
-            <input
-              value={adminForm.category}
-              onChange={(e) =>
-                setAdminForm((s) => ({ ...s, category: e.target.value }))
-              }
-              placeholder="category"
-            />
-            <input
-              value={adminForm.price}
-              onChange={(e) =>
-                setAdminForm((s) => ({ ...s, price: e.target.value }))
-              }
-              placeholder="price"
-            />
-            <input
-              value={adminForm.stock}
-              onChange={(e) =>
-                setAdminForm((s) => ({ ...s, stock: e.target.value }))
-              }
-              placeholder="stock"
-            />
-            <input
-              value={adminForm.unit}
-              onChange={(e) =>
-                setAdminForm((s) => ({ ...s, unit: e.target.value }))
-              }
-              placeholder="unit"
-            />
-            <input
-              value={adminForm.description}
-              onChange={(e) =>
-                setAdminForm((s) => ({ ...s, description: e.target.value }))
-              }
-              placeholder="description"
-            />
-            <button onClick={createAdminProduct} disabled={!isAdmin || busy}>
-              Create Product
-            </button>
-          </div>
         </div>
       </section>
     </div>
